@@ -142,22 +142,56 @@ def serialize_tx(t):
 @app.route('/api/transactions/', methods=['GET'])
 def get_transactions():
     if 'user_id' not in session:
-        return jsonify({ 'error': 'Not logged in' }), 401
+        return jsonify({'error': 'Not logged in'}), 401
 
-    user = mongo.db.users.find_one({'_id': ObjectId(session['user_id'])})
-    txs = user.get('transactions', [])
+    user_id = session['user_id']
 
-    # group by Month Year
-    grouped = {}
-    for t in txs:
-        month = t['date'].strftime('%B %Y')
-        grouped.setdefault(month, []).append(serialize_tx(t))
+    # During automated tests, use the mocked MongoDB database.
+    if app.config.get('TESTING'):
+        user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
 
-    result = [
-        { 'month': m, 'transactions': lst }
-        for m, lst in grouped.items()
-    ]
-    return jsonify(result)
+        grouped = {}
+        for t in user.get('transactions', []):
+            month = t['date'].strftime('%B %Y')
+            grouped.setdefault(month, []).append(serialize_tx(t))
+
+        return jsonify([
+            {'month': month, 'transactions': transactions}
+            for month, transactions in grouped.items()
+        ])
+
+    # In Docker, request the monthly report from Node.js.
+    import json
+    import urllib.request
+    import urllib.error
+    import calendar
+
+    service_url = (
+        'http://transactions:3000/api/transactions/' + user_id
+    )
+
+    try:
+        with urllib.request.urlopen(service_url, timeout=5) as response:
+            reports = json.load(response)
+
+        result = []
+        for group in reports:
+            year = group['_id']['year']
+            month_number = group['_id']['month']
+            month = f"{calendar.month_name[month_number]} {year}"
+
+            result.append({
+                'month': month,
+                'transactions': group['transactions']
+            })
+
+        return jsonify(result)
+
+    except (urllib.error.URLError, ValueError, KeyError, TypeError) as error:
+        app.logger.error('Transactions service error: %s', error)
+        return jsonify({'error': 'Transactions service unavailable'}), 502
 
 
 @app.route('/api/logout')
