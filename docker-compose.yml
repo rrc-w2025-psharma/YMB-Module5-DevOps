@@ -1,0 +1,66 @@
+services:
+  # MongoDB database for YMB accounts and transactions
+  mongo:
+    image: mongo:6
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - ymb-network
+
+  # Python/Flask banking backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      MONGO_URI: mongodb://mongo:27017/bank_app
+      SECRET_KEY: ymb-part3-local-dev-key
+    depends_on:
+      - mongo
+    networks:
+      - ymb-network
+
+  # JavaScript transactions microservice
+  transactions:
+    build:
+      context: ./transactions
+      dockerfile: Dockerfile
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      PORT: "3000"
+    depends_on:
+      - mongo
+    networks:
+      - ymb-network
+
+  # Student portfolio frontend
+  studentportfolio:
+    build:
+      context: ./studentportfolio
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    networks:
+      - ymb-network
+
+  # NGINX reverse proxy and public API gateway
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - transactions
+      - studentportfolio
+    networks:
+      - ymb-network
+
+volumes:
+  mongo_data:
+
+networks:
+  ymb-network:
+    driver: bridge
